@@ -15,7 +15,7 @@ class EClass:
     def __init__(self, id) -> None:
         self.id: int = id
         self.enodes: List[ENode] = []
-        self.parents: List[Tuple[ENode, int]] = []
+        self.parents: Dict[ENode, int] = {}
 
     def add_enode(self, enode):
         self.enodes.append(enode)
@@ -26,7 +26,7 @@ class EGraph:
         self.eclass_map: Dict[int, EClass] = {}
         self.hashcons: Dict[ENode, int] = {}
         self.eclass_id_counter = 0
-        self.worklists = []
+        self.worklists: List[int] = []
 
     def find(self, id: int) -> int:
         return self.union_find.find(id)
@@ -74,3 +74,26 @@ class EGraph:
         eclass.add_enode(enode)
         self.eclass_map[new_eclass_id] = eclass
         return new_eclass_id
+
+    def rebuild(self):
+        while len(self.worklists) > 0:
+            todo = self.worklists
+            self.worklists.clear()
+            todo = {self.find(eclass) for eclass in todo}
+            for eclass in todo:
+                self.repair(eclass)
+
+    def repair(self, eclass_id: int):
+        eclass = self.eclass_map[eclass_id]
+        for (p_node, p_eclass) in eclass.parents.items():
+            del self.hashcons[p_node]
+            p_node = self.canonicalize(p_node)
+            self.hashcons[p_node] = self.find(p_eclass)
+
+        new_parents: Dict[ENode, int] = {}
+        for (p_node, p_eclass) in eclass.parents.items():
+            p_node = self.canonicalize(p_node)
+            if p_node in new_parents:
+                self.union(p_eclass, new_parents[p_node])
+            new_parents[p_node] = self.find(p_eclass)
+        eclass.parents = new_parents
