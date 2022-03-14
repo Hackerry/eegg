@@ -5,57 +5,72 @@ from unionfind import UnionFind
 MAX_ECLASS_SIZE = 10000
 
 class ENode:
-    id_counter = 0
-    # TODO: add type
-    def __init__(self, token) -> None:
-        self.id = ENode.id_counter
-        ENode.id_counter += 1
+    def __init__(self, op, children = []) -> None:
         self.class_id = -1
-        self.token = token
+        self.op = op
+        self.children: List[int] = children
 
 
 class EClass:
     def __init__(self, id) -> None:
         self.id: int = id
-        self.nodes: List[ENode] = []
+        self.enodes: List[ENode] = []
         self.parents: List[Tuple[ENode, int]] = []
 
-    def add_enode(self, node):
-        self.nodes.append(node)
+    def add_enode(self, enode):
+        self.enodes.append(enode)
 
 class EGraph:
     def __init__(self) -> None:
         self.union_find = UnionFind(MAX_ECLASS_SIZE)
         self.eclass_map: Dict[int, EClass] = {}
-        self.hashcons: Dict[int, int] = {}
+        self.hashcons: Dict[ENode, int] = {}
         self.eclass_id_counter = 0
+        self.worklists = []
 
     def find(self, id: int) -> int:
         return self.union_find.find(id)
 
-    def lookup_enode(self, id: int) -> int:
-        if id in self.hashcons:
-            return self.hashcons[id]
+    def lookup_enode(self, enode) -> int:
+        if enode in self.hashcons:
+            return self.hashcons[enode]
         else:
             return -1
 
-    def add(self, node: ENode) -> int:
-        lookup_result = self.lookup_enode(node.id)
+    def add(self, enode: ENode) -> int:
+        enode = self.canonicalize(enode)
+        lookup_result = self.lookup_enode(enode)
         if lookup_result != -1:
             return lookup_result
         else:
-            eclass_id = self.eclass_id_counter
-            self.eclass_id_counter += 1
-            self.hashcons[node.id] = eclass_id
-            eclass = EClass(eclass_id)
-            eclass.add_enode(node)
-            self.eclass_map[eclass_id] = eclass
+            eclass_id = self.new_singleton_eclass(enode)
+            # TODO: update children's parents is missing
+            self.hashcons[enode] = eclass_id
             return eclass_id
 
+    def canonicalize(self, enode: ENode):
+        new_children = [self.find(e) for e in enode.children]
+        return self.make_enode(enode.op, new_children)
+
     def union(self, eclass_id1: int, eclass_id2: int):
-        pass
-        # self.union_find.union(id_a, id_b)
+        if self.find(eclass_id1) == self.find(eclass_id2):
+            return self.find(eclass_id1)
+        self.union_find.union(eclass_id1, eclass_id2)
+        new_id = self.union_find.find(eclass_id1)
+        self.worklists.append(new_id)
+        return new_id
 
     def ematch(self):
         pass
 
+    def make_enode(self, op, children):
+        enode = ENode(op, children)
+        return enode
+
+    def new_singleton_eclass(self, enode):
+        new_eclass_id = self.eclass_id_counter
+        self.eclass_id_counter += 1
+        eclass = EClass(new_eclass_id)
+        eclass.add_enode(enode)
+        self.eclass_map[new_eclass_id] = eclass
+        return new_eclass_id
