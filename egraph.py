@@ -44,7 +44,9 @@ class EGraph:
             return lookup_result
         else:
             eclass_id = self.new_singleton_eclass(enode)
-            # TODO: update children's parents is missing
+            for child in enode.children:
+                child_eclass = self.eclass_map[child]
+                child_eclass.parents[enode] = eclass_id
             self.hashcons[enode] = eclass_id
             return eclass_id
 
