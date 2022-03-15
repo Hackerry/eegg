@@ -3,10 +3,10 @@ from typing import Dict, Set, Tuple, List
 from unionfind import UnionFind
 import ast
 
-MAX_ECLASS_SIZE = 10000
+MAX_ECLASS_SIZE = 1000
 
 class ENode:
-    def __init__(self, op) -> None:
+    def __init__(self, op):
         self.class_id = -1
         self.op = op
         self.children: List[int] = []
@@ -28,10 +28,10 @@ class ENode:
         return "ENode(%s%s)" % (self.op, self.children)
 
 class EClass:
-    def __init__(self, id) -> None:
+    def __init__(self, id):
         self.id: int = id
         self.enodes: List[ENode] = []
-        self.parents: List[ENode, int] = []
+        self.parents: Dict[ENode, int] = {}
 
     def add_enode(self, enode:ENode):
         self.enodes.append(enode)
@@ -44,10 +44,10 @@ class EClass:
         return "{EClass-%s: %s}" % (self.id, str(self.enodes))
 
 class EGraph:
-    def __init__(self) -> None:
+    def __init__(self):
         self.union_find = UnionFind(MAX_ECLASS_SIZE)
         self.eclass_map: Dict[int, EClass] = {}
-        self.hashcons: Dict[int, ENode] = {}
+        self.hashcons: Dict[int, int] = {}
         self.eclass_id_counter = 0
         self.worklists: List[int] = []
         self.saturated: bool = False
@@ -57,24 +57,9 @@ class EGraph:
         # print(ast.dump(tnode.body))
         self.generate_enodes_from_ast(tnode.body, with_class=True)
 
-    def find(self, id: int) -> int:
-        return self.union_find.find(id)
-
-    # def add(self, enode: ENode) -> int:
-    #     enode = self.canonicalize(enode)
-    #     if enode in self.hashcons:
-    #         return 
-    #     else:
-    #         eclass_id = self.new_singleton_eclass(enode)
-    #         for child in enode.children:
-    #             child_eclass = self.eclass_map[child]
-    #             child_eclass.parents[enode] = eclass_id
-    #         self.hashcons[enode] = eclass_id
-    #         return eclass_id
-
     def canonicalize(self, enode: ENode):
-        new_children = [self.find(e) for e in enode.children]
-        return ENode(enode.op, new_children)
+        new_children = [self.union_find.find(e) for e in enode.children]
+        enode.children = new_children
 
     def union(self, eclass_id1: int, eclass_id2: int):
         if self.find(eclass_id1) == self.find(eclass_id2):
@@ -84,7 +69,7 @@ class EGraph:
         self.worklists.append(new_id)
         return new_id
 
-    def ematch(self, lhs_node:ENode) -> List[Tuple[int, Dict[str, int]]]:
+    def ematch(self, lhs_node:ENode):
         # Store matchings
         matches = []
         
@@ -110,7 +95,7 @@ class EGraph:
                 if pnode.op not in variables:
                     # Record variable hole as filled
                     variables[pnode.op] = enode.class_id
-                elif variables[pnode.op] != enode:
+                elif variables[pnode.op] != enode.class_id:
                     # A variable is filled with 2 distinct value, report inconsistency
                     return False
             # This is a literal and ops don't match
@@ -120,7 +105,7 @@ class EGraph:
             if not pnode.is_variable and len(pnode.children) != len(enode.children):
                 return False
             for i in range(len(pnode.children)):
-                if not self.ematch_helper_match(self.eclass_map[enode.children[i]], pnode.children[i], variables):
+                if not self.ematch_helper(self.eclass_map[enode.children[i]], pnode.children[i], variables):
                     # Children don't match
                     return False
             
@@ -131,46 +116,53 @@ class EGraph:
         # Id pairs to merge
         merge_ids = []
         
-        # Apply rewrites to matched portions
+        # Find matchings for the rewrite
         for (eclass_id, variables) in matches:
             # Generate new eclass for this matching
-            new_eclass = self.add_helper(rhs_node, None, variables)
-            print("Generated eclass:", new_eclass)
-            print("New classes:")
-            self.print_eclass_map()
+            new_eclass = self.add_helper(rhs_node, variables)
+            
+            # print("Generated eclass:", new_eclass)
+            # print("Now classes:")
+            # self.print_eclass_map()
             
             # Record merge ids
             merge_ids.append((eclass_id, new_eclass))
         
+        print("Merge ids:", merge_ids)
         return merge_ids
     
-    def add_helper(self, pnode:ENode, parent:ENode, variables:Dict[str, ENode]):
-        print("pnode:", pnode)
-        
+    def add_helper(self, pnode:ENode, variables:Dict[str, int]):
         # This is a variable, reuse enode
         if pnode.is_variable:
             # Load stored variable and update parent pointer
-            enode = variables[pnode.op]
-            if parent != None and parent not in self.eclass_map[enode.class_id].parents:
-                self.eclass_map[enode.class_id].parents.append(parent)
-            return enode.class_id
+            return variables[pnode.op]
         
         # This is a concret symbol, create new class
         enode = ENode(pnode.op)
-        eclass = self.eclass_map[self.new_singleton_eclass(enode)]
         
         # Get children enodes and update parent pointers
         children = []
         for child in pnode.children:
-            class_id = self.ematch_helper_generate(child, enode, variables)
+            class_id = self.add_helper(child, variables)
             children.append(class_id)
+        enode.children.extend(children)
+            
+        # Check hashing
+        self.canonicalize(enode)
+        hash = enode.hash()
+        if hash in self.hashcons:
+            # Duplicate
+            eclass = self.hashcons[hash]
+            return eclass
+        
+        eclass = self.eclass_map[self.new_singleton_eclass(enode)]
         
         # Update new node's parent and children pointers
-        enode.children.extend(children)
-        if parent != None:
-            eclass.parents.append(parent)
+        for child_class_id in children:
+            self.eclass_map[child_class_id].parents[enode] = eclass.id
         
         # Generate hash for new enode
+        self.canonicalize(enode)
         self.store_hash(enode)
         
         return eclass.id
@@ -181,6 +173,8 @@ class EGraph:
         while not self.saturated and cur_iter < iteration_limit:
             # Store matched enodes
             matches = []
+            
+            self.saturated = True
             
             # Read possible rewrite-change locations
             for rule in rules:
@@ -193,6 +187,8 @@ class EGraph:
                 # First, find all matching enodes to the rewrite rule
                 matches.append(self.ematch(lhs_node))
             
+            print("Rewrite rule matches:", matches)
+
             # Check length match
             assert len(matches) == len(rules)
             
@@ -206,16 +202,89 @@ class EGraph:
                 
                 # Then apply all rewrites
                 class_pairs = self.add(rhs_node, matches[i])
+                print("Merge class pairs:", class_pairs)
+                self.print_eclass_map()
                 
-                # Merge class pairs
-                self.merge(class_pairs)
+                for (class1, class2) in class_pairs:
+                    # Merge class pairs
+                    self.merge(class1, class2)
+                    
+                    self.print_eclass_map()
+                    
+                    # Rebuild and restore invariants
+                    self.rebuild()
+                    
+                # print(self.union_find)
             
             cur_iter += 1
+        
+        print("Finish in %s iterations" % cur_iter)
+    
+    def merge(self, class1, class2):
+        id1 = self.union_find.find(class1)
+        id2 = self.union_find.find(class2)
+        if id1 == id2:
+            return id1
+        
+        # Not saturated
+        self.saturated = False
+        
+        # Union two nodes in the structure
+        new_id = self.union_find.union(id1, id2)
+        self.worklists.append(new_id)
+        
+        # Actually union two classes
+        if new_id == id1: other_id = id2
+        else: other_id = id1
+        
+        # Merge nodes and parents, delete old class
+        self.eclass_map[new_id].enodes.extend(self.eclass_map[other_id].enodes)
+        self.eclass_map[new_id].parents.update(self.eclass_map[other_id].parents)
+        del self.eclass_map[other_id]
+        print("Delete class:", other_id, "used:", new_id)
+        
+        return new_id
+    
+    def rebuild(self):
+        print("Work list:", self.worklists)
+        while len(self.worklists) > 0:
+            # Find all class ids affected by this merge
+            classes = [self.union_find.find(eclass) for eclass in self.worklists]
+            self.worklists = []
+            for eclass in classes:
+                self.repair(eclass)
+
+    def repair(self, eclass_id: int):
+        eclass = self.eclass_map[eclass_id]
+        
+        for (p_node, p_eclass) in eclass.parents.items():
+            # Remove old hashing and store new hashing
+            del self.hashcons[p_node.hash()]
+            self.canonicalize(p_node)
+            new_hash = p_node.hash()
+            print(p_node)
+            self.hashcons[new_hash] = self.union_find.find(p_eclass)
+
+        new_parents: Dict[ENode, int] = {}
+        for (p_node, p_eclass) in eclass.parents.items():
+            self.canonicalize(p_node)
+            
+            # Duplicate parents, merge
+            if p_node in new_parents:
+                self.merge(p_eclass, new_parents[p_node])
+                
+                # self.saturated = False
+            
+            new_parents[p_node] = self.union_find.find(p_eclass)
+        # Update new parents
+        eclass.parents = new_parents    
     
     # Parse an ast to enode structure
     # with_class is enabled when constructing the egraph
     #               disabled when generating egraph-like structure for ematch
     def generate_enodes_from_ast(self, tnode, with_class=False):
+        # print("Generate node dump:", ast.dump(tnode))
+        
         # Name is variable hole
         if isinstance(tnode, ast.Name):
             enode = ENode(str(tnode.id))
@@ -229,7 +298,7 @@ class EGraph:
                 # Check hash for potential duplicates
                 hash = enode.hash()
                 if hash in self.hashcons:
-                    return self.eclass_map[self.hashcons[hash].class_id]
+                    return self.eclass_map[self.hashcons[hash]]
                 
                 # Generate class and hash
                 eclass = self.eclass_map[self.new_singleton_eclass(enode)]
@@ -255,22 +324,25 @@ class EGraph:
             enode = ENode(op)
             if with_class:
                 # Assemble enode
+                print("L:", left, "R:", right)
                 enode.children.append(left.id)
                 enode.children.append(right.id)
                 
                 # Compute hash for duplicates
                 hash = enode.hash()
                 if hash in self.hashcons:
-                    return self.eclass_map[self.hashcons[hash].class_id]
+                    return self.eclass_map[self.hashcons[hash]]
                 
                 eclass = self.eclass_map[self.new_singleton_eclass(enode)]
             
                 # Register parents and children
-                left.parents.append(enode)
-                right.parents.append(enode)
+                left.parents[enode] = eclass.id
+                right.parents[enode] = eclass.id
                 
                 # Generate hashcons for each enode
                 self.store_hash(enode)
+                
+                print("Return:", eclass)
                 return eclass
             else:
                 enode.children.append(left)
@@ -294,42 +366,25 @@ class EGraph:
         
         return new_eclass_id
 
-    def store_hash(self, enode):
+    def store_hash(self, enode:ENode):
         hash = enode.hash()
         if hash in self.hashcons:
             print("Warning: hash %s already present of %s" % (hash, enode))
-        self.hashcons[hash] = enode
-
-    def rebuild(self):
-        while len(self.worklists) > 0:
-            todo = self.worklists
-            self.worklists.clear()
-            todo = {self.find(eclass) for eclass in todo}
-            for eclass in todo:
-                self.repair(eclass)
-
-    def repair(self, eclass_id: int):
-        eclass = self.eclass_map[eclass_id]
-        for (p_node, p_eclass) in eclass.parents.items():
-            del self.hashcons[p_node]
-            p_node = self.canonicalize(p_node)
-            self.hashcons[p_node] = self.find(p_eclass)
-
-        new_parents: Dict[ENode, int] = {}
-        for (p_node, p_eclass) in eclass.parents.items():
-            p_node = self.canonicalize(p_node)
-            if p_node in new_parents:
-                self.union(p_eclass, new_parents[p_node])
-            new_parents[p_node] = self.find(p_eclass)
-        eclass.parents = new_parents
+        self.hashcons[hash] = enode.class_id
     
     def print_eclass_map(self):
         for i in self.eclass_map:
             print("%s: %s" % (i, self.eclass_map[i]))
+    
+    def find_min_ast(self):
+        pass        
 
 egraph = EGraph()
-# egraph.init_graph("3*4+3*6")
-egraph.init_graph("3*1+3*2")
+# egraph.init_graph("3+4")
+# egraph.init_graph("3+0")
+# egraph.init_graph("(3+3)+(3+3)")
+egraph.init_graph("3*4+2*4")
+# egraph.init_graph("'x'*2/2")
 egraph.print_eclass_map()
 # print(egraph.hashcons)
 
@@ -337,7 +392,13 @@ egraph.print_eclass_map()
 # print(ast.dump(node.body))
 # enode = egraph.generate_enodes_from_ast(node.body)
 # print(enode)
-rules = [("x*1+x*z", "x*(1+z)")]
-# rules = [("3*5+2*5", "5*(2+3)")]
-egraph.apply_rules_to_egraph(rules)
+rules = [("x*y+x*z", "x*(y+z)"), ("x+y", "y+x")]
+# rules = [("y", "y*1")]
+egraph.eq_sat(rules, iteration_limit=5)
 
+print()
+print("Final classes:")
+egraph.print_eclass_map()
+
+print()
+print("Min AST Expr:", egraph.find_min_ast())

@@ -17,14 +17,16 @@ class UnionFind:
     def union(self, x, y):
         x = self.find(x)
         y = self.find(y)
-        if x == y: return
+        if x == y: return x
         
         if self._size[x] > self._size[y]:
             self._id[y] = x
             self._size[x] += self._size[y]
+            return x
         else:
             self._id[x] = y
             self._size[y] += self._size[x]
+            return y
 
     def __str__(self):
         return " ".join([str(x) for x in self._id])
