@@ -61,14 +61,6 @@ class EGraph:
         new_children = [self.union_find.find(e) for e in enode.children]
         enode.children = new_children
 
-    def union(self, eclass_id1: int, eclass_id2: int):
-        if self.find(eclass_id1) == self.find(eclass_id2):
-            return self.find(eclass_id1)
-        self.union_find.union(eclass_id1, eclass_id2)
-        new_id = self.union_find.find(eclass_id1)
-        self.worklists.append(new_id)
-        return new_id
-
     def ematch(self, lhs_node:ENode):
         # Store matchings
         matches = []
@@ -79,7 +71,7 @@ class EGraph:
 
             variables = {}
             if self.ematch_helper(eclass, lhs_node, variables):
-                print("Found matching:", eclass, "with variables", variables)
+                print("Found matching:", eclass, "with variables", variables, "lhs being", lhs_node)
                 matches.append((eclass.id, variables))
 
         return matches
@@ -324,7 +316,7 @@ class EGraph:
             enode = ENode(op)
             if with_class:
                 # Assemble enode
-                print("L:", left, "R:", right)
+                # print("L:", left, "R:", right)
                 enode.children.append(left.id)
                 enode.children.append(right.id)
 
@@ -342,7 +334,7 @@ class EGraph:
                 # Generate hashcons for each enode
                 self.store_hash(enode)
 
-                print("Return:", eclass)
+                # print("Return:", eclass)
                 return eclass
             else:
                 enode.children.append(left)
@@ -373,32 +365,9 @@ class EGraph:
         self.hashcons[hash] = enode.class_id
 
     def print_eclass_map(self):
+        print("printing eclass map")
         for i in self.eclass_map:
             print("%s: %s" % (i, self.eclass_map[i]))
 
     def find_min_ast(self):
         pass
-
-egraph = EGraph()
-# egraph.init_graph("3+4")
-# egraph.init_graph("3+0")
-# egraph.init_graph("(3+3)+(3+3)")
-egraph.init_graph("3*4+2*4")
-# egraph.init_graph("'x'*2/2")
-egraph.print_eclass_map()
-# print(egraph.hashcons)
-
-# node = ast.parse("x+'y'", mode='eval')
-# print(ast.dump(node.body))
-# enode = egraph.generate_enodes_from_ast(node.body)
-# print(enode)
-rules = [("x*y+x*z", "x*(y+z)"), ("x+y", "y+x")]
-# rules = [("y", "y*1")]
-egraph.eq_sat(rules, iteration_limit=5)
-
-print()
-print("Final classes:")
-egraph.print_eclass_map()
-
-print()
-print("Min AST Expr:", egraph.find_min_ast())
