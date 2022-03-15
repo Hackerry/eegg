@@ -18,7 +18,7 @@ class UnionFind:
         x = self.find(x)
         y = self.find(y)
         if x == y: return x
-        
+
         if self._size[x] > self._size[y]:
             self._id[y] = x
             self._size[x] += self._size[y]
