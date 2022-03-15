@@ -427,7 +427,7 @@ class EGraph:
                         min_step[eclass_id] = (min_expr, sum_step, len(cls_visited))
         
         # Find the min value for the root class (ie. not child)
-        print(min_step, self.root_class_id)
+        # print(min_step, self.root_class_id)
         return (min_step[self.root_class_id][0], min_step[self.root_class_id][1])
 
 allowed_operators = ["+", "-", "*", "/"]
@@ -459,18 +459,14 @@ def get_expr_from_lisp(expr):
         # print("op_stack: %s num_stack: %s" % (op_stack, num_stack))
     return num_stack[0]
 
-print(get_expr_from_lisp("(+ (+ (* 8 9) (+ (+ (* 2 10) (+ 4 7)) (+ (* (+ 3 6) 5) 1))) (* 2 (+ 3 7)))"))
-
-if __name__ == "__main__":
-    egraph = EGraph()
-    egraph.init_graph("3*5+0+3*4")
-
+def test():
+    import test
     rules = [
-        ["y+0", "y"],
-        ["y*0", "0"],
+        ["x+0", "x"],
+        ["x*0", "0"],
         ["x-0", "x"],
         ["0/x", "0"],
-        ["y*1", "y"],
+        ["x*1", "x"],
         ["x/1", "x"],
         
         ["x-x", "0"],
@@ -485,8 +481,49 @@ if __name__ == "__main__":
         ["x/y+z*y", "(x+z)/y"],
         ["x/y-z*y", "(x-z)/y"],
         
-        ["x-y", "0-x+y"],
-        ["x-y-z", "x-(y+z)"],
+        ["x+x", "2*x"],
+    ]
+    for i in range(len(test.tests)):
+        egraph = EGraph()
+        egraph.init_graph(test.tests[i][0])
+    
+        # Equality saturation
+        egraph.eq_sat(rules)
+
+        # print()
+        # print("Final classes:")
+        # egraph.print_eclass_map()
+
+        (expr, _) = egraph.find_min_ast()
+        print("Expected: %s Got: %s" % (test.tests[i][1], get_expr_from_lisp(expr)))
+
+if __name__ == "__main__":
+    egraph = EGraph()
+    egraph.init_graph("1+1+2*3")
+    
+    # rules = [["y+0", "y"],["x*y+x*z", "x*(y+z)"],["x+y", "y+x"],["x*y", "y*x"],]
+
+    rules = [
+        ["x+0", "x"],
+        ["x*0", "0"],
+        ["x-0", "x"],
+        ["0/x", "0"],
+        ["x*1", "x"],
+        ["x/1", "x"],
+        
+        ["x-x", "0"],
+        ["x/x", "1"],
+        
+        ["x+y", "y+x"],
+        ["x*y", "y*x"],
+        ["x+y+z", "y+x+z"],
+        
+        ["x*y+x*z", "x*(y+z)"],
+        ["x*y-x*z", "x*(y-z)"],
+        ["x/y+z*y", "(x+z)/y"],
+        ["x/y-z*y", "(x-z)/y"],
+        
+        ["x+x", "2*x"],
     ]
     egraph.eq_sat(rules)
 

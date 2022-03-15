@@ -1,6 +1,5 @@
 import argparse
+import egraph
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-
+egraph.test()
 
