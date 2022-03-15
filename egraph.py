@@ -4,6 +4,7 @@ from unionfind import UnionFind
 import ast
 
 MAX_ECLASS_SIZE = 1000
+MAX_COST = 1e10
 
 class ENode:
     def __init__(self, op):
@@ -51,11 +52,12 @@ class EGraph:
         self.eclass_id_counter = 0
         self.worklists: List[int] = []
         self.saturated: bool = False
+        self.top_level_eclass_id = -1
 
     def init_graph(self, expr):
         tnode = ast.parse(expr, mode='eval')
         # print(ast.dump(tnode.body))
-        self.generate_enodes_from_ast(tnode.body, with_class=True)
+        self.generate_enodes_from_ast(tnode.body, with_class=True, top_level=True)
 
     def canonicalize(self, enode: ENode):
         new_children = [self.union_find.find(e) for e in enode.children]
@@ -233,6 +235,8 @@ class EGraph:
         self.eclass_map[new_id].enodes.extend(self.eclass_map[other_id].enodes)
         self.eclass_map[new_id].parents.update(self.eclass_map[other_id].parents)
         del self.eclass_map[other_id]
+        if other_id == self.top_level_eclass_id:
+            self.top_level_eclass_id = new_id
         print("Delete class:", other_id, "used:", new_id)
 
         return new_id
@@ -274,7 +278,7 @@ class EGraph:
     # Parse an ast to enode structure
     # with_class is enabled when constructing the egraph
     #               disabled when generating egraph-like structure for ematch
-    def generate_enodes_from_ast(self, tnode, with_class=False):
+    def generate_enodes_from_ast(self, tnode, with_class=False, top_level=False):
         # print("Generate node dump:", ast.dump(tnode))
 
         # Name is variable hole
@@ -296,6 +300,8 @@ class EGraph:
                 eclass = self.eclass_map[self.new_singleton_eclass(enode)]
                 self.store_hash(enode)
                 # print("Create new eclass:", eclass)
+                if top_level:
+                    self.top_level_eclass_id = eclass.id
                 return eclass
             else:
                 return enode
@@ -333,7 +339,8 @@ class EGraph:
 
                 # Generate hashcons for each enode
                 self.store_hash(enode)
-
+                if top_level:
+                    self.top_level_eclass_id = eclass.id
                 # print("Return:", eclass)
                 return eclass
             else:
@@ -370,4 +377,32 @@ class EGraph:
             print("%s: %s" % (i, self.eclass_map[i]))
 
     def find_min_ast(self):
-        pass
+        top_eclass = self.eclass_map[self.top_level_eclass_id]
+        cost, expr = self.find_min_ast_eclass(top_eclass)
+        return cost, expr
+
+    def find_min_ast_eclass(self, eclass: EClass):
+        costs = []
+        exprs = []
+        for enode in eclass.enodes:
+            cost, expr = self.find_min_ast_enode(enode)
+            costs.append(cost)
+            exprs.append(expr)
+        min_cost = MAX_COST
+        idx = -1
+        for i in range(len(costs)):
+            if costs[i] < min_cost:
+                min_cost = costs[i]
+                idx = i
+        return costs[idx], exprs[idx]
+
+    def find_min_ast_enode(self, enode: ENode):
+        if enode.is_variable:
+            return (1, enode.op)
+        if len(enode.children) > 1:
+            assert(len(enode.children) == 2)
+            lhs_cost, lhs_expr = self.find_min_ast_eclass(self.eclass_map[enode.children[0]])
+            rhs_cost, rhs_expr = self.find_min_ast_eclass(self.eclass_map[enode.children[1]])
+            return 1 + lhs_cost + rhs_cost, f"({enode.op} {lhs_expr} {rhs_expr})"
+        else:
+            return (1, enode.op)
