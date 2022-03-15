@@ -4,12 +4,15 @@ from unionfind import UnionFind
 import ast
 
 MAX_ECLASS_SIZE = 1000
+MAX_ITERATION = 1000
 
 class ENode:
     def __init__(self, op):
         self.class_id = -1
         self.op = op
         self.children: List[int] = []
+        
+        # Used in formatting rewrite rule
         self.is_variable = False
         
     def get_hashable_string(self):
@@ -51,11 +54,14 @@ class EGraph:
         self.eclass_id_counter = 0
         self.worklists: List[int] = []
         self.saturated: bool = False
+        
+        self.root_class_id = 0
     
     def init_graph(self, expr):
         tnode = ast.parse(expr, mode='eval')
         # print(ast.dump(tnode.body))
-        self.generate_enodes_from_ast(tnode.body, with_class=True)
+        eclass = self.generate_enodes_from_ast(tnode.body, with_class=True)
+        self.root_class_id = eclass.id
 
     def canonicalize(self, enode: ENode):
         new_children = [self.union_find.find(e) for e in enode.children]
@@ -79,7 +85,7 @@ class EGraph:
             
             variables = {}
             if self.ematch_helper(eclass, lhs_node, variables):
-                print("Found matching:", eclass, "with variables", variables)
+                # print("Found matching:", eclass, "with variables", variables)
                 matches.append((eclass.id, variables))
         
         return matches
@@ -128,7 +134,6 @@ class EGraph:
             # Record merge ids
             merge_ids.append((eclass_id, new_eclass))
         
-        print("Merge ids:", merge_ids)
         return merge_ids
     
     def add_helper(self, pnode:ENode, variables:Dict[str, int]):
@@ -143,7 +148,7 @@ class EGraph:
         # Get children enodes and update parent pointers
         children = []
         for child in pnode.children:
-            class_id = self.add_helper(child, variables)
+            class_id = self.union_find.find(self.add_helper(child, variables))
             children.append(class_id)
         enode.children.extend(children)
             
@@ -167,10 +172,10 @@ class EGraph:
         
         return eclass.id
     
-    def eq_sat(self, rules:List[Tuple[str, str]], iteration_limit = 1):
-        cur_iter = 0
-        print("Rewrite rules:", rules)
-        while not self.saturated and cur_iter < iteration_limit:
+    def eq_sat(self, rules:List[Tuple[str, str]], iteration_limit = MAX_ITERATION):
+        self.cur_iter = 0
+        # print("Rewrite rules:", rules)
+        while not self.saturated and self.cur_iter < iteration_limit:
             # Store matched enodes
             matches = []
             
@@ -187,7 +192,7 @@ class EGraph:
                 # First, find all matching enodes to the rewrite rule
                 matches.append(self.ematch(lhs_node))
             
-            print("Rewrite rule matches:", matches)
+            # print("Rewrite rule matches:", matches)
 
             # Check length match
             assert len(matches) == len(rules)
@@ -202,36 +207,42 @@ class EGraph:
                 
                 # Then apply all rewrites
                 class_pairs = self.add(rhs_node, matches[i])
-                print("Merge class pairs:", class_pairs)
-                self.print_eclass_map()
+                # print(class_pairs)
+                # self.print_eclass_map()
                 
                 for (class1, class2) in class_pairs:
                     # Merge class pairs
                     self.merge(class1, class2)
                     
-                    self.print_eclass_map()
+                    # self.print_eclass_map()
                     
                     # Rebuild and restore invariants
                     self.rebuild()
                     
                 # print(self.union_find)
             
-            cur_iter += 1
+            self.cur_iter += 1
         
-        print("Finish in %s iterations" % cur_iter)
+        # print("Finish in %s iterations" % self.cur_iter)
     
     def merge(self, class1, class2):
+        # print("Merge ids: %s-%s" % (class1, class2))
+        
         id1 = self.union_find.find(class1)
         id2 = self.union_find.find(class2)
         if id1 == id2:
             return id1
         
-        # Not saturated
+        # Not saturated bc we have a merge
         self.saturated = False
         
         # Union two nodes in the structure
         new_id = self.union_find.union(id1, id2)
         self.worklists.append(new_id)
+        
+        # Update root node
+        if id1 == self.root_class_id or id2 == self.root_class_id:
+            self.root_class_id = new_id
         
         # Actually union two classes
         if new_id == id1: other_id = id2
@@ -241,12 +252,12 @@ class EGraph:
         self.eclass_map[new_id].enodes.extend(self.eclass_map[other_id].enodes)
         self.eclass_map[new_id].parents.update(self.eclass_map[other_id].parents)
         del self.eclass_map[other_id]
-        print("Delete class:", other_id, "used:", new_id)
+        # elete class:", other_id, "used:", new_id)
         
         return new_id
     
     def rebuild(self):
-        print("Work list:", self.worklists)
+        # print("Work list:", self.worklists)
         while len(self.worklists) > 0:
             # Find all class ids affected by this merge
             classes = [self.union_find.find(eclass) for eclass in self.worklists]
@@ -259,10 +270,10 @@ class EGraph:
         
         for (p_node, p_eclass) in eclass.parents.items():
             # Remove old hashing and store new hashing
-            del self.hashcons[p_node.hash()]
+            if p_node.hash() in self.hashcons:
+                del self.hashcons[p_node.hash()]
             self.canonicalize(p_node)
             new_hash = p_node.hash()
-            print(p_node)
             self.hashcons[new_hash] = self.union_find.find(p_eclass)
 
         new_parents: Dict[ENode, int] = {}
@@ -324,7 +335,6 @@ class EGraph:
             enode = ENode(op)
             if with_class:
                 # Assemble enode
-                print("L:", left, "R:", right)
                 enode.children.append(left.id)
                 enode.children.append(right.id)
                 
@@ -342,7 +352,6 @@ class EGraph:
                 # Generate hashcons for each enode
                 self.store_hash(enode)
                 
-                print("Return:", eclass)
                 return eclass
             else:
                 enode.children.append(left)
@@ -377,28 +386,116 @@ class EGraph:
             print("%s: %s" % (i, self.eclass_map[i]))
     
     def find_min_ast(self):
-        pass        
+        # print("Root class id:", self.root_class_id)
+        min_step = {}
+        
+        # Set all literal expr to 1
+        for (eclass_id, eclass) in self.eclass_map.items():
+            if eclass not in min_step:
+                for enode in eclass.enodes:
+                    if len(enode.children) == 0:
+                        min_step[eclass_id] = (enode.op, 1, 1)
+                        break
+        
+        # print("After ground:", min_step)
+        
+        # Then propogate up until a ground expr reached
+        while len(min_step) < len(self.eclass_map):
+            for (eclass_id, eclass) in self.eclass_map.items():
+                for enode in eclass.enodes:
+                    sum_step = 1
+                    cls_visited = [eclass_id]
+                    min_expr = enode.op + " "
+                    complete = True
+                    recursive = False
+                    
+                    for child_class_id in enode.children:
+                        recursive = True
+                        if child_class_id in min_step:
+                            if child_class_id not in cls_visited:
+                                cls_visited.append(child_class_id)
+                            sum_step += min_step[child_class_id][1]
+                            min_expr += min_step[child_class_id][0]
+                            min_expr += " "
+                        else:
+                            complete = False
+                            break
+                    
+                    # This is a complete term
+                    if complete and (eclass_id not in min_step or min_step[eclass_id][1] > sum_step):
+                        if recursive: min_expr = '(' + min_expr + ')'
+                        min_step[eclass_id] = (min_expr, sum_step, len(cls_visited))
+        
+        # Find the min value for the root class (ie. not child)
+        print(min_step, self.root_class_id)
+        return (min_step[self.root_class_id][0], min_step[self.root_class_id][1])
 
-egraph = EGraph()
-# egraph.init_graph("3+4")
-# egraph.init_graph("3+0")
-# egraph.init_graph("(3+3)+(3+3)")
-egraph.init_graph("3*4+2*4")
-# egraph.init_graph("'x'*2/2")
-egraph.print_eclass_map()
-# print(egraph.hashcons)
+allowed_operators = ["+", "-", "*", "/"]
+def get_expr_from_lisp(expr):
+    expr = expr.replace(")", " ) ")
+    op_stack = []
+    num_stack = []
 
-# node = ast.parse("x+'y'", mode='eval')
-# print(ast.dump(node.body))
-# enode = egraph.generate_enodes_from_ast(node.body)
-# print(enode)
-rules = [("x*y+x*z", "x*(y+z)"), ("x+y", "y+x")]
-# rules = [("y", "y*1")]
-egraph.eq_sat(rules, iteration_limit=5)
+    for op in expr.split(" "):
+        if op == '':
+            continue
+        elif op in allowed_operators:
+            op_stack.append(op)
+        elif op[0] == '(':
+            op_stack.append(op[1])
+        elif op == ')':
+            right_op = num_stack.pop()
+            op = op_stack.pop()
+            left_op = num_stack.pop()
 
-print()
-print("Final classes:")
-egraph.print_eclass_map()
+            # Parens around neg exprs
+            if right_op[0] == '-': right_op = "(" + right_op + ')'
+            if left_op[0] == '-': left_op = "(" + left_op + ')'
 
-print()
-print("Min AST Expr:", egraph.find_min_ast())
+            num_stack.append('(' + left_op + ' ' + op + ' ' + right_op + ')')
+        else:
+            num_stack.append(op)
+
+        # print("op_stack: %s num_stack: %s" % (op_stack, num_stack))
+    return num_stack[0]
+
+print(get_expr_from_lisp("(+ (+ (* 8 9) (+ (+ (* 2 10) (+ 4 7)) (+ (* (+ 3 6) 5) 1))) (* 2 (+ 3 7)))"))
+
+if __name__ == "__main__":
+    egraph = EGraph()
+    egraph.init_graph("3*5+0+3*4")
+
+    rules = [
+        ["y+0", "y"],
+        ["y*0", "0"],
+        ["x-0", "x"],
+        ["0/x", "0"],
+        ["y*1", "y"],
+        ["x/1", "x"],
+        
+        ["x-x", "0"],
+        ["x/x", "1"],
+        
+        ["x+y", "y+x"],
+        ["x*y", "y*x"],
+        ["x+y+z", "y+x+z"],
+        
+        ["x*y+x*z", "x*(y+z)"],
+        ["x*y-x*z", "x*(y-z)"],
+        ["x/y+z*y", "(x+z)/y"],
+        ["x/y-z*y", "(x-z)/y"],
+        
+        ["x-y", "0-x+y"],
+        ["x-y-z", "x-(y+z)"],
+    ]
+    egraph.eq_sat(rules)
+
+    print()
+    print("Final classes:")
+    egraph.print_eclass_map()
+
+    print()
+    (expr, size) = egraph.find_min_ast()
+    print("Lisp:", expr)
+    print("Expr with min AST size is %s with size %s" % (get_expr_from_lisp(expr), size))
+    print("Finish with %s classes, %s nodes, in %s iterations" % (len(egraph.eclass_map), len(egraph.hashcons), egraph.cur_iter))
